@@ -8,6 +8,7 @@
 #include <DallasTemperature.h>
 #include <DHT.h>
 #include <SoftwareSerial.h>
+#include <TinyGPS++.h>
 
 
 
@@ -100,6 +101,23 @@ SoftwareSerial sim800Serial(SIM800_RX, SIM800_TX);
 #define EMERGENCY_PHONE "+94752051204"
 // Emergency phone number hospital
 #define EMERGENCY_PHONE2 "+94712051203"
+
+
+const int ecgPin = A0;      // Connect to the OUT pin of AD8232
+const int loPlusPin = 10;   // Connect to LO+ pin of AD8232 (optional)
+const int loMinusPin = 11;  // Connect to LO- pin of AD8232 (optional)
+
+
+
+static const int RXPin = 22, TXPin = 23;     // RX and TX pins for GPS
+static const uint32_t GPSBaud = 9600;        // Change to 9600 for better compatibility with SoftwareSerial
+static const unsigned long timeout = 30000;  // 30 seconds timeout for GPS
+
+
+TinyGPSPlus gps;                  // Create an instance of the TinyGPSPlus object
+SoftwareSerial ss(RXPin, TXPin);  // Set up SoftwareSerial on pins 22 (RX) and 23 (TX)
+
+
 
 
 
@@ -268,14 +286,22 @@ void checkForFalls() {
 
 
 int ECGcalculation() {
-  if (digitalRead(10) == 1 || digitalRead(11) == 1) {
-    Serial.println(0);
+  int ecgValue = analogRead(ecgPin);  // Read the ECG signal from A0
+
+  // Lead-off detection
+  int loPlusStatus = digitalRead(loPlusPin);
+  int loMinusStatus = digitalRead(loMinusPin);
+
+  if (loPlusStatus == 1 || loMinusStatus == 1) {
+    Serial.println("Lead off detected!");
     return 0;
   } else {
-    Serial.println(analogRead(A0));
-    return analogRead(A0);
+    // Output the ECG value
+    Serial.println(ecgValue);
+    return ecgValue;
   }
-  delay(10);
+
+  delay(10);  // Small delay for smoother serial output
 }
 
 
@@ -375,16 +401,115 @@ void handleButtonPress() {
 
   if (lastButtonState == LOW && currentButtonState == HIGH) {  // Button pressed
     Serial.println("Emergency button pressed. Sending SMS...");
+    myDFPlayer.play(1);
     sendSMS(EMERGENCY_PHONE, "Emergency Alert: Immediate assistance needed!");
     sendSMS(EMERGENCY_PHONE2, "Emergency Alert: Immediate assistance needed!");
 
-    myDFPlayer.play(1);                                               // Play the first track (0001.mp3)
+    // Start time tracking to check for 60 seconds timeout
+    unsigned long startMillis = millis();
+
+    // Check GPS data for 60 seconds
+    while (millis() - startMillis < timeout) {
+      if (ss.available() > 0) {
+        char incomingByte = ss.read();
+        Serial.print("Received byte: ");
+        Serial.println(incomingByte, DEC);  // Print the raw byte received from GPS
+
+        if (gps.encode(incomingByte))  // Decode the GPS data
+        {
+          if (gps.location.isValid())  // Check if location is valid
+          {
+            Serial.println("Sending Location SMS...");
+            sendLocationViaSMS();  // Send valid GPS location via SMS
+            return;                // Exit after sending valid location
+          }
+        }
+      } else {
+        Serial.println("Waiting for GPS data...");  // Added to check if the GPS is sending anything
+      }
+    }
+
+    // If no valid location is found after 30 seconds, send the default location via SMS
+    // sendSMS2("Location not found. Sending default location.");
+    sendDefaultLocationViaSMS();
+
+    myDFPlayer.stop();
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("Stabilized.");
+    display.println("Place your finger");
+    display.println("to start reading.");
+    display.display();
+
+    myDFPlayer.stop();  // Stop the music only after stabilization
+    resetForNextReading();
   } else if (lastButtonState == HIGH && currentButtonState == LOW) {  // Button released
     myDFPlayer.stop();                                                // Stop the music
   }
 
   lastButtonState = currentButtonState;  // Update the last state
 }
+
+
+
+void sendLocationViaSMS() {
+  String location = "Location: " + String(gps.location.lat(), 6) + ", " + String(gps.location.lng(), 6);
+  String message = location + "  Date: " + String(gps.date.month()) + "/" + String(gps.date.day()) + "/" + String(gps.date.year());
+  sendSMS2(message);
+  displayInfo();
+}
+
+void sendDefaultLocationViaSMS() {
+  // Sending the default location via SMS if no GPS data is found
+  String defaultLocation = "Location: 7.299093, 80.634076 ";
+  Serial.println("Sending Location SMS...");
+  sendSMS2(defaultLocation);
+}
+
+void sendSMS2(String message) {
+  sim800Serial.println("AT");  // Test the connection
+  delay(1000);
+
+  sim800Serial.println("AT+CMGF=1");  // Set SMS text mode
+  delay(1000);
+
+  sim800Serial.println("AT+CMGS=\"+94712051203\"");  // Recipient phone number
+  delay(1000);
+
+  sim800Serial.println(message);  // The message to send
+  delay(1000);
+
+  sim800Serial.write(26);  // ASCII code for Ctrl+Z (End of message)
+  delay(5000);             // Give some time for SMS to send
+  Serial.println("Sending SMS Completed");
+}
+
+void displayInfo() {
+  Serial.print(F("Location: "));
+  Serial.print(gps.location.lat(), 6);  // Latitude with 6 decimal places
+  Serial.print(F(", "));
+  Serial.print(gps.location.lng(), 6);  // Longitude with 6 decimal places
+  Serial.print(F("  Date: "));
+  if (gps.date.isValid()) {
+    Serial.print(gps.date.month());
+    Serial.print(F("/"));
+    Serial.print(gps.date.day());
+    Serial.print(F("/"));
+    Serial.print(gps.date.year());
+  } else {
+    Serial.print(F("INVALID"));
+  }
+  Serial.println();  // New line
+}
+
+void displayDefaultLocation() {
+  // Display the default location if no GPS signal is found
+  Serial.print(F("Location: 7.299093, 80.634076  Date: INVALID"));
+  Serial.println();  // New line
+}
+
+
 
 
 
@@ -410,7 +535,7 @@ void checkForAbnormalReadings(float heartRate, float spo2, float tempC, float av
     Serial.println("Abnormal Body Temperature!");
   }
 
-  float ecgvalue = ECGcalculation();
+  int ecgvalue = ECGcalculation();
   // Check if ECG reading is abnormal
   if (ecgvalue > ABNORMAL_ECG_THRESHOLD || ecgvalue == ABNORMAL_ECG_THRESHOLD_LOW) {
     abnormal = true;
@@ -435,7 +560,7 @@ void checkForAbnormalReadings(float heartRate, float spo2, float tempC, float av
     display.setCursor(0, 0);
     display.println("Abnormal readings detected!");
     display.display();
-    sendSMS(EMERGENCY_PHONE, "Emergency Alert: Immediate assistance needed! Abnormal Health");
+    sendSMS(EMERGENCY_PHONE, "Emergency Alert: Abnormal readings detected!");
     delay(2000);
     myDFPlayer.stop();
   }
@@ -447,21 +572,21 @@ void checkForAbnormalReadings(float heartRate, float spo2, float tempC, float av
 void sendSMS(const char* phoneNumber, const char* message) {
   sim800Serial.println("AT");  // Test if the SIM800L is responding
   delay(1000);
-  
+
   sim800Serial.println("AT+CMGF=1");  // Set SMS mode to text
   delay(1000);
-  
+
   sim800Serial.print("AT+CMGS=\"");  // Command to send SMS
-  sim800Serial.print(phoneNumber);  // Phone number
+  sim800Serial.print(phoneNumber);   // Phone number
   sim800Serial.println("\"");
 
   delay(1000);
-  
+
   sim800Serial.println(message);  // Message content
   delay(1000);
-  
+
   sim800Serial.write(26);  // ASCII code for Ctrl+Z to send the message
-  delay(5000);  // Wait for the message to be sent
+  delay(5000);             // Wait for the message to be sent
 
   Serial.println("SMS sent successfully!");
 }
@@ -470,7 +595,7 @@ void sendSMS(const char* phoneNumber, const char* message) {
 bool checkSIM800L() {
   sim800Serial.println("AT");  // Test if the SIM800L is responding
   delay(1000);
-  
+
   // Check for the "OK" response
   if (sim800Serial.available()) {
     String response = sim800Serial.readString();
@@ -478,7 +603,7 @@ bool checkSIM800L() {
       return true;  // SIM800L is initialized and responding
     }
   }
-  
+
   return false;  // SIM800L did not respond correctly
 }
 
@@ -492,8 +617,8 @@ void setup() {
 
   FPSerial.begin(9600);  // Initialize the serial communication with DFPlayer Mini
   Serial.begin(115200);
-  pinMode(10, INPUT);  //ECG LO+
-  pinMode(11, INPUT);  //ECG LO-
+  pinMode(loPlusPin, INPUT);   // Configure LO+ as input
+  pinMode(loMinusPin, INPUT);  // Configure LO- as input
   // Initialize button pin
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
@@ -579,8 +704,8 @@ void setup() {
   delay(10000);
 
   // Test the SIM800L with a simple AT command
-  sim800Serial.println("AT"); // Send AT command
-  delay(1000); // Wait for a response
+  sim800Serial.println("AT");  // Send AT command
+  delay(1000);                 // Wait for a response
   if (sim800Serial.available()) {
     String response = sim800Serial.readString();
     Serial.println("SIM800L Response: " + response);
@@ -595,6 +720,7 @@ void setup() {
     Serial.println("SIM800L initialization failed.");
   }
 
+  ss.begin(GPSBaud);  // Start communication with GPS at the defined baud rate
 
 
   initFallDetection();

@@ -1,6 +1,6 @@
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
-SoftwareSerial gpsSerial(16,17);
+SoftwareSerial gpsSerial(8,9);
 TinyGPSPlus gps;
 float lattitude,longitude;
 

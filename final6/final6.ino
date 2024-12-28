@@ -102,6 +102,12 @@ SoftwareSerial sim800Serial(SIM800_RX, SIM800_TX);
 #define EMERGENCY_PHONE2 "+94712051203"
 
 
+const int ecgPin = A0; // Connect to the OUT pin of AD8232
+const int loPlusPin = 10; // Connect to LO+ pin of AD8232 (optional)
+const int loMinusPin = 11; // Connect to LO- pin of AD8232 (optional)
+
+
+
 
 
 
@@ -268,14 +274,22 @@ void checkForFalls() {
 
 
 int ECGcalculation() {
-  if (digitalRead(10) == 1 || digitalRead(11) == 1) {
-    Serial.println(0);
+  int ecgValue = analogRead(ecgPin); // Read the ECG signal from A0
+  
+  // Lead-off detection
+  int loPlusStatus = digitalRead(loPlusPin);
+  int loMinusStatus = digitalRead(loMinusPin);
+
+  if (loPlusStatus == 1 || loMinusStatus == 1) {
+    Serial.println("Lead off detected!");
     return 0;
   } else {
-    Serial.println(analogRead(A0));
-    return analogRead(A0);
+    // Output the ECG value
+    Serial.println(ecgValue);
+    return ecgValue;
   }
-  delay(10);
+  
+  delay(10); // Small delay for smoother serial output
 }
 
 
@@ -375,10 +389,11 @@ void handleButtonPress() {
 
   if (lastButtonState == LOW && currentButtonState == HIGH) {  // Button pressed
     Serial.println("Emergency button pressed. Sending SMS...");
+    myDFPlayer.play(1); 
     sendSMS(EMERGENCY_PHONE, "Emergency Alert: Immediate assistance needed!");
     sendSMS(EMERGENCY_PHONE2, "Emergency Alert: Immediate assistance needed!");
 
-    myDFPlayer.play(1);                                               // Play the first track (0001.mp3)
+    myDFPlayer.stop();                                               
   } else if (lastButtonState == HIGH && currentButtonState == LOW) {  // Button released
     myDFPlayer.stop();                                                // Stop the music
   }
@@ -410,7 +425,7 @@ void checkForAbnormalReadings(float heartRate, float spo2, float tempC, float av
     Serial.println("Abnormal Body Temperature!");
   }
 
-  float ecgvalue = ECGcalculation();
+  int ecgvalue = ECGcalculation();
   // Check if ECG reading is abnormal
   if (ecgvalue > ABNORMAL_ECG_THRESHOLD || ecgvalue == ABNORMAL_ECG_THRESHOLD_LOW) {
     abnormal = true;
@@ -435,7 +450,7 @@ void checkForAbnormalReadings(float heartRate, float spo2, float tempC, float av
     display.setCursor(0, 0);
     display.println("Abnormal readings detected!");
     display.display();
-    sendSMS(EMERGENCY_PHONE, "Emergency Alert: Immediate assistance needed! Abnormal Health");
+    sendSMS(EMERGENCY_PHONE, "Emergency Alert: Abnormal readings detected!");
     delay(2000);
     myDFPlayer.stop();
   }
@@ -492,8 +507,8 @@ void setup() {
 
   FPSerial.begin(9600);  // Initialize the serial communication with DFPlayer Mini
   Serial.begin(115200);
-  pinMode(10, INPUT);  //ECG LO+
-  pinMode(11, INPUT);  //ECG LO-
+  pinMode(loPlusPin, INPUT); // Configure LO+ as input
+  pinMode(loMinusPin, INPUT); // Configure LO- as input
   // Initialize button pin
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
