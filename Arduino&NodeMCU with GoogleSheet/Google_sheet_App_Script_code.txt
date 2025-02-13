@@ -1,0 +1,91 @@
+// Firebase URL and API Key
+const firebaseUrl = 'https://iot-project-1639f-default-rtdb.asia-southeast1.firebasedatabase.app/SensorData/';
+const firebaseApiKey = 'AIzaSyASOLXA-khPFKOGeMqyfR_c8moY_PAhcnY';
+
+// Sheet Name
+const sheetName = 'SensorDataCombined'; // Single sheet to store all data
+
+function fetchDataFromFirebase() {
+  try {
+    // Fetch all data from Firebase under SensorData
+    const response = UrlFetchApp.fetch(firebaseUrl + '.json?auth=' + firebaseApiKey, { muteHttpExceptions: true });
+    
+    // Log the raw response to check the structure
+    Logger.log('Firebase Response: ' + response.getContentText());
+    
+    // Check for error code in response
+    if (response.getResponseCode() !== 200) {
+      Logger.log('Error: ' + response.getResponseCode());
+      return;
+    }
+    
+    // Parse the response
+    const sensorData = JSON.parse(response.getContentText());
+    
+    // Log the parsed data to check its structure
+    Logger.log('Parsed Sensor Data: ' + JSON.stringify(sensorData));
+    
+    // Check if there is any data returned
+    if (sensorData) {
+      // Access the sheet
+      const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+      
+      // Clear the existing data and headers
+      sheet.clear(); // This will clear all existing data, including headers.
+      
+      // Re-add the headers
+      sheet.appendRow([
+        'Body Temp', 'Humidity', 'Room Temp', 'Heart Rate', 'SpO2', 'Diastolic', 'Systolic', 'Date', 'Time'
+      ]);
+      Logger.log('Headers re-added to sheet.');
+      
+      // Iterate over each unique key in the SensorData
+      for (let key in sensorData) {
+        const entry = sensorData[key];
+        
+        // Log the current entry being processed
+        Logger.log('Processing entry: ' + JSON.stringify(entry));
+        
+        // Combine the data into a single row for the sheet
+        const row = [
+          entry.bodyTemp || "",    // Body Temp (SensorData1)
+          entry.humidity || "",    // Humidity (SensorData1)
+          entry.roomTemp || "",    // Room Temp (SensorData1)
+          entry.heartRate || "",   // Heart Rate (SensorData2)
+          entry.spo2 || "",        // SpO2 (SensorData2)
+          entry.diastolicBP || "",   // Diastolic (SensorData2)
+          entry.systolicBP || "",    // Systolic (SensorData2)
+          entry.date || "",        // Date (Common field)
+          entry.time || ""         // Time (Common field)
+        ];
+
+        // Check if all the sensor fields (except date and time) are empty
+        const sensorFields = [
+          entry.bodyTemp,
+          entry.humidity,
+          entry.roomTemp,
+          entry.heartRate,
+          entry.spo2,
+          entry.diastolicBP,
+          entry.systolicBP
+        ];
+        
+        // If all sensor fields are empty, skip appending this row
+        const isAllEmpty = sensorFields.every(field => !field);
+
+        if (isAllEmpty) {
+          Logger.log('Skipping empty row for entry: ' + JSON.stringify(entry));
+          continue;
+        }
+
+        // Push the combined row data to the Google Sheet
+        sheet.appendRow(row);
+        Logger.log('Row appended to sheet: ' + JSON.stringify(row));
+      }
+    } else {
+      Logger.log('No data found in Firebase.');
+    }
+  } catch (error) {
+    Logger.log('Error fetching data: ' + error.message);
+  }
+}
